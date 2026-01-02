@@ -6,7 +6,6 @@
         "declaration": true,
         "declarationDir": "dist",
         "outDir": "dist",
-        "rootDir": "src",
         "strict": true,
         "esModuleInterop": true,
         "skipLibCheck": true,
@@ -20,7 +19,8 @@
         ]
     },
     "include": [
-        "src/**/*"
+        "src/**/*",
+        "script/**/*"
     ],
     "exclude": [
         "node_modules",

@@ -59,7 +59,7 @@ const schema = {
     },
 };
 
-const outputPath = join(import.meta.dir, "..", "dist", "opencode-wiki.schema.json");
+const outputPath = join(import.meta.dirname!, "..", "dist", "opencode-wiki.schema.json");
 
 // Ensure dist directory exists
 mkdirSync(dirname(outputPath), { recursive: true });
