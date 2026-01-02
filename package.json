@@ -1,0 +1,60 @@
+{
+    "name": "opencode-wiki",
+    "version": "0.1.0",
+    "description": "OpenCode plugin - automatic wiki generation for codebases",
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "type": "module",
+    "bin": {
+        "opencode-wiki": "./dist/cli/index.js"
+    },
+    "files": [
+        "dist"
+    ],
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js"
+        },
+        "./schema.json": "./dist/opencode-wiki.schema.json"
+    },
+    "scripts": {
+        "build": "bun build src/index.ts --outdir dist --target bun --format esm && tsc --emitDeclarationOnly && bun build src/cli/index.ts --outdir dist/cli --target bun --format esm && bun run build:schema",
+        "build:schema": "bun run script/build-schema.ts",
+        "clean": "rm -rf dist",
+        "prepublishOnly": "bun run clean && bun run build",
+        "typecheck": "tsc --noEmit",
+        "test": "bun test"
+    },
+    "keywords": [
+        "opencode",
+        "plugin",
+        "wiki",
+        "documentation",
+        "generator",
+        "agents",
+        "ai",
+        "llm"
+    ],
+    "author": "chao243",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/chao243/opencode-wiki.git"
+    },
+    "bugs": {
+        "url": "https://github.com/chao243/opencode-wiki/issues"
+    },
+    "homepage": "https://github.com/chao243/opencode-wiki#readme",
+    "dependencies": {
+        "@opencode-ai/plugin": "^1.0.162",
+        "@opencode-ai/sdk": "^1.0.162",
+        "commander": "^14.0.2",
+        "picocolors": "^1.1.1",
+        "zod": "^4.1.8"
+    },
+    "devDependencies": {
+        "bun-types": "latest",
+        "typescript": "^5.7.3"
+    }
+}
