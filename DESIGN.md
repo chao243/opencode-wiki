@@ -66,6 +66,33 @@ graph TB
 
 ## 3. Agent 详细设计
 
+### 3.0 Agent 配置接口
+
+基于 `@opencode-ai/sdk` 的 `AgentConfig` 类型，所有 Agent 需实现以下接口：
+
+```typescript
+import type { AgentConfig } from "@opencode-ai/sdk"
+
+interface WikiAgentConfig extends AgentConfig {
+  description: string;           // Agent 描述
+  mode: "subagent" | "background"; // 运行模式
+  model: string;                 // 模型标识 (e.g., "anthropic/claude-sonnet-4")
+  temperature?: number;          // 温度参数 (默认: 0.1)
+  tools: {                       // 工具权限
+    write?: boolean;             // 文件写入权限
+    edit?: boolean;              // 文件编辑权限
+    task?: boolean;              // 子任务创建权限
+    background_task?: boolean;   // 后台任务权限
+  };
+  prompt: string;                // System Prompt
+  thinking?: {                   // 思考模式配置 (可选)
+    type: "enabled";
+    budgetTokens: number;
+  };
+}
+```
+
+
 ### 3.1 Wiki Orchestrator (主 Agent)
 
 **Role**: `system-orchestrator`
@@ -717,6 +744,7 @@ wiki/
 - [ ] 编写插件开发者指南。
 - [ ] 创建示例项目和演示。
 - [ ] 发布 v1.0 版本。
+
 ---
 
 ## 9. 多语言支持架构
