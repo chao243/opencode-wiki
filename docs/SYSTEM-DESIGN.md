@@ -1,8 +1,8 @@
 # OpenCode Wiki Generator - 系统设计文档
 
- **版本**: 2.1
+ **版本**: 2.2
  **日期**: 2026-01-05
- **状态**: 架构修订版（基于 Oracle 审查）
+ **状态**: 架构修订版（基于 Oracle 审查 - 添加 Renderer 模块）
 
 ---
 
@@ -57,47 +57,59 @@
 4. **可恢复性**：支持中断后继续生成，避免重复工作
 5. **增量支持**：支持增量更新现有文档
 
- ### 系统架构图
+  ### 系统架构图
 
- ```mermaid
- graph TB
-     User[用户] --> |请求| Orchestrator[Wiki Orchestrator<br/>主编排 Agent]
+  ```mermaid
+  graph TB
+      User[用户] --> |请求| Orchestrator[Wiki Orchestrator<br/>主编排 Agent]
 
-     subgraph "Phase 1: 全局分析"
-         Orchestrator --> |wiki_start_task| Scheduler1[内置任务调度器]
-         Scheduler1 --> |调用| Analyzer1[Wiki Analyzer<br/>全局分析]
-         Analyzer1 --> |返回| Scheduler1
-         Scheduler1 --> |结果| Result1[Global Analysis Result<br/>项目类型 + 模块列表]
-     end
+      subgraph "Phase 1: 全局分析"
+          Orchestrator --> |wiki_start_task| Scheduler1[内置任务调度器]
+          Scheduler1 --> |调用| Analyzer1[Wiki Analyzer<br/>全局分析]
+          Analyzer1 --> |返回| Scheduler1
+          Scheduler1 --> |结果| Result1[Global Analysis Result<br/>项目类型 + 模块列表]
+      end
 
-     Result1 --> |生成清单| Orchestrator
+      Result1 --> |生成清单| Orchestrator
 
-     subgraph "Phase 2: 循环并发生成"
-         Orchestrator --> |并发调度| Scheduler2[内置任务调度器<br/>max_concurrent_tasks限制]
+      subgraph "Phase 2: 循环并发生成"
+          Orchestrator --> |并发调度| Scheduler2[内置任务调度器<br/>max_concurrent_tasks限制]
 
-         Scheduler2 --> |分析| Analyzer2[Wiki Analyzer<br/>单元分析 xN]
-         Analyzer2 --> |分析结果| Scheduler2
+          Scheduler2 --> |分析| Analyzer2[Wiki Analyzer<br/>单元分析 xN]
+          Analyzer2 --> |分析结果| Scheduler2
 
-         Scheduler2 --> |结果| Orchestrator
+          Scheduler2 --> |结果| Orchestrator
 
-         Orchestrator --> |生成| Writer[Markdown Generation<br/>xN个并发任务]
-         Writer --> |写入文件| Files[Wiki Files]
+          Orchestrator --> |转换 IR| Renderer[Wiki Renderer<br/>渲染模块]
+          Renderer --> |生成| Files[Wiki Files<br/>Markdown xN]
 
-         Orchestrator --> |一次性写入| Nav[_sidebar.md<br/>Overwrite模式]
-     end
+          Note over Orchestrator,Renderer: 纯组件调用，无状态<br/>模板驱动渲染
 
-     subgraph "Phase 3: 最终验证"
-         Orchestrator --> |验证| Validator[Link Validator]
-         Validator --> |报告| Report[完成报告]
-         Report --> User
-     end
+          Orchestrator --> |一次性写入| Nav[_sidebar.md<br/>Overwrite模式]
+      end
 
-     subgraph "插件内部工具"
-         wiki_start_task["wiki_start_task<br/>启动分析任务"]
-         wiki_get_result["wiki_get_result<br/>获取任务结果"]
-         wiki_cancel_task["wiki_cancel_task<br/>取消任务"]
-     end
- ```
+      subgraph "Phase 3: 最终验证"
+          Orchestrator --> |验证| Validator[Link Validator]
+          Validator --> |报告| Report[完成报告]
+          Report --> User
+      end
+
+      subgraph "插件内部工具"
+          wiki_start_task["wiki_start_task<br/>启动分析任务"]
+          wiki_get_result["wiki_get_result<br/>获取任务结果"]
+          wiki_cancel_task["wiki_cancel_task<br/>取消任务"]
+      end
+
+      subgraph "Wiki Renderer 组件"
+          IR["PageIR<br/>中间表示"]
+          Templates["模板系统<br/>.md.hbs"]
+          Formatter["格式化规则<br/>链接规范化"]
+      end
+
+      Renderer --> IR
+      Renderer --> Templates
+      Renderer --> Formatter
+  ```
 
 ---
 
@@ -201,161 +213,371 @@
 }
 ```
 
-#### 推荐配置
- ```json
- {
-   "$schema": "./opencode-wiki.schema.json",
+ #### 推荐配置
+```json
+{
+  "$schema": "./opencode-wiki.schema.json",
 
-   /** Wiki 输出目录 */
-   "output_dir": "./wiki",
+  /** Wiki 输出目录 */
+  "output_dir": "./wiki",
 
-   /** 是否覆盖已存在的内容（谨慎使用） */
-   "overwrite_existing": false,
+  /** 是否覆盖已存在的内容（谨慎使用） */
+  "overwrite_existing": false,
 
-   /** 排除模式 */
-   "exclude_patterns": [
-     "**/node_modules/**",
-     "**/dist/**",
-     "**/build/**",
-     "**/*.test.ts",
-     "**/*.spec.ts",
-     "**/.env*",
-     "**/*credentials*"
-   ],
+  /** 排除模式 */
+  "exclude_patterns": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/*.test.ts",
+    "**/*.spec.ts",
+    "**/.env*",
+    "**/*credentials*"
+  ],
 
-   /** Agent 模型配置 */
-   "agents": {
-     "orchestrator": {
-       "model": "anthropic/claude-opus-4-5",
-       "temperature": 0.1,
-       "thinking": {
-         "type": "enabled",
-         "budgetTokens": 32000
-       }
-     },
-     "analyzer": {
-       "model": "google/gemini-3-flash",
-       "temperature": 0.0
-     }
-   },
+  /** Agent 模型配置 */
+  "agents": {
+    "orchestrator": {
+      "model": "anthropic/claude-opus-4-5",
+      "temperature": 0.1,
+      "thinking": {
+        "type": "enabled",
+        "budgetTokens": 32000
+      }
+    },
+    "analyzer": {
+      "model": "google/gemini-3-flash",
+      "temperature": 0.0
+    }
+  },
 
-   /** 并发控制 */
-   "parallelism": {
-     "max_concurrent_tasks": 3,
-     "strategy": "dynamic",
-     /** 任务超时时间（毫秒） */
-     "task_timeout": 120000
-   },
+  /** 并发控制 */
+  "parallelism": {
+    "max_concurrent_tasks": 3,
+    "strategy": "dynamic",
+    /** 任务超时时间（毫秒） */
+    "task_timeout": 120000
+  },
 
-   /** 生成选项 */
-   "generation": {
-     "include_overview": true,
-     "include_modules": true,
-     "include_api_docs": false,
-     "include_diagrams": false,
-     "include_guides": false,
-     /** 是否支持增量生成（中断后继续） */
+  /** 生成选项 */
+  "generation": {
+    "include_overview": true,
+    "include_modules": true,
+    "include_api_docs": false,
+    "include_diagrams": false,
+    "include_guides": false,
+    /** 是否支持增量生成（中断后继续） */
     "enable_incremental": true
-   },
+  },
 
-   /** 数据规模控制 */
+  /** 数据规模控制 */
   "limits": {
-     /** 单次分析的最大文件数 */
+    /** 单次分析的最大文件数 */
     "max_files_per_analysis": 1000,
-     /** 单元分析的最大符号数 */
+    /** 单元分析的最大符号数 */
     "max_symbols_per_unit": 50,
-     /** 全局分析的最大模块数 */
+    /** 全局分析的最大模块数 */
     "max_modules_global": 20,
-     /** 单个文件的最大行数（超过则摘要处理） */
+    /** 单个文件的最大行数（超过则摘要处理） */
     "max_lines_per_file": 1000
   },
 
-   /** 验证选项 */
-   "validation": {
-     "check_links": true,
-     "report_failures": true,
-     /** 验证失败时是否继续 */
+  /** 验证选项 */
+  "validation": {
+    "check_links": true,
+    "report_failures": true,
+    /** 验证失败时是否继续 */
     "continue_on_failure": false
   },
 
-   /** 安全选项 */
+  /** 安全选项 */
   "security": {
-     /** 是否跳过包含敏感信息的文件 */
+    /** 是否跳过包含敏感信息的文件 */
     "skip_sensitive_files": true,
-     /** 敏感关键词列表 */
+    /** 敏感关键词列表 */
     "sensitive_keywords": ["password", "secret", "api_key", "token", "credential"]
   }
- }
- ```
+}
+```
+
+### 2.3 Wiki Renderer (渲染模块)
+
+#### 角色
+- **文档渲染引擎**：将结构化分析数据转换为 Markdown 格式
+- **模板系统**：提供一致的文档样式和格式
+- **链接规范化**：确保所有内部链接正确且可解析
+
+#### 职责
+
+**接收 IR（Intermediate Representation）**
+- 接收来自 Wiki Analyzer 的 `UnitAnalysisResult` 或 `GlobalAnalysisResult`
+- 转换为标准化的 `PageIR` 格式
+- 确保数据符合渲染契约
+
+**渲染 Markdown**
+- 使用模板系统生成一致的文档格式
+- 应用代码高亮、表格、列表等格式化规则
+- 生成文档元数据（frontmatter）
+
+**链接处理**
+- 规范化所有内部链接（使用相对路径）
+- 验证链接目标的可访问性
+- 处理交叉引用（如 `[相关文档](../other-module.md)`）
+
+**可扩展性**
+- 支持自定义模板（通过配置指定）
+- 支持多种输出格式（Markdown, MDX, HTML - 未来扩展）
+- 支持样式变体（不同项目可使用不同模板）
+
+#### 设计原则
+
+1. **纯函数式**：渲染函数应该是纯函数，相同输入产生相同输出
+2. **可测试性**：易于进行单元测试，不依赖外部状态
+3. **无状态**：不维护任何内部状态，所有状态通过参数传递
+4. **模板驱动**：使用模板而非硬编码格式，易于定制
+
+#### 接口定义
+
+```typescript
+/**
+ * 页面中间表示（IR）
+ *
+ * 作为 Analyzer 输出和 Markdown 之间的标准化契约
+ */
+interface PageIR {
+  /** 页面元数据 */
+  metadata: {
+    title: string;
+    path?: string;           // 相对于 output_dir 的输出路径
+    sidebar_position?: number;
+    last_updated: string;
+  };
+
+  /** 页面内容（结构化） */
+  content: {
+    /** 简介/概述 */
+    description?: string;
+
+    /** 主要部分列表 */
+    sections: PageSection[];
+  };
+
+  /** 引用的其他页面（用于导航和链接验证） */
+  references: string[];      // 其他 page_id 列表
+
+  /** 页面类型 */
+  type: "overview" | "module" | "feature" | "api";
+}
+
+/**
+ * 页面部分
+ */
+interface PageSection {
+  /** 部分标题 */
+  heading: string;
+
+  /** 层级（1-6） */
+  level: number;
+
+  /** 部分内容（可以是文本、代码块、表格等） */
+  content: PageContent[];
+}
+
+/**
+ * 页面内容（联合类型）
+ */
+type PageContent =
+  | { type: "paragraph"; text: string }
+  | { type: "code_block"; code: string; language: string; caption?: string }
+  | { type: "list"; items: string[]; ordered: boolean }
+  | { type: "table"; headers: string[]; rows: string[][] }
+  | { type: "callout"; level: "info" | "warning" | "error" | "success"; text: string }
+  | { type: "link"; text: string; url: string }
+  | { type: "symbol_reference"; name: string; signature?: string; docstring?: string };
+
+/**
+ * Wiki Renderer 接口
+ */
+interface WikiRenderer {
+  /**
+   * 将分析结果转换为 PageIR
+   */
+  toPageIR(
+    analysis: GlobalAnalysisResult | UnitAnalysisResult,
+    config: GenerationConfig
+  ): PageIR;
+
+  /**
+   * 将 PageIR 渲染为 Markdown
+   */
+  render(
+    pageIR: PageIR,
+    template?: string  // 可选的模板名称
+  ): string;
+
+  /**
+   * 验证渲染输出的完整性
+   */
+  validate(markdown: string): {
+    valid: boolean;
+    errors: string[];
+  };
+}
+```
+
+#### 配置选项
+
+```json
+{
+  "renderer": {
+    /** 模板目录（可选，默认使用内置模板） */
+    "template_dir": "./templates",
+
+    /** 默认模板名称 */
+    "default_template": "standard",
+
+    /** 代码块配置 */
+    "code_blocks": {
+      "enable_line_numbers": true,
+      "enable_copy_button": true
+    },
+
+    /** 链接配置 */
+    "links": {
+      "use_relative_paths": true,
+      "validate_on_render": true
+    },
+
+    /** 格式化选项 */
+    "formatting": {
+      "max_heading_depth": 4,
+      "line_width": 120,
+      "emphasis_style": "asterisk"  // asterisk | underscore
+    }
+  }
+}
+```
+
+#### 模板系统结构
+
+```
+templates/
+├── standard/              # 标准模板
+│   ├── overview.md.hbs
+│   ├── module.md.hbs
+│   ├── feature.md.hbs
+│   └── api.md.hbs
+├── minimal/               # 简洁模板
+│   └── ...
+└── detailed/              # 详细模板
+    └── ...
+```
+
+#### 渲染流程
+
+```
+Analyzer Result (UnitAnalysisResult)
+    ↓
+toPageIR()
+    ↓
+PageIR (标准化中间表示)
+    ↓
+render(template)
+    ↓
+Markdown (最终输出)
+    ↓
+validate()
+    ↓
+wiki_write_page()
+```
+
+#### 优势
+
+1. **关注点分离**：Orchestrator 专注编排，Renderer 专注渲染
+2. **易于测试**：纯函数，可以独立进行单元测试
+3. **可扩展性**：通过模板支持多种样式，无需修改代码
+4. **可维护性**：格式变更只需修改模板或 Renderer，不影响编排逻辑
+5. **一致性**：统一使用 Renderer 确保所有页面格式一致
+
 
 ---
 
 ## 3. 工作流程详解
 
- ### 3.1 完整流程图
+  ### 3.1 完整流程图
 
- ```mermaid
- sequenceDiagram
-     participant User
-     participant Orch as Wiki Orchestrator
-     participant Scheduler as 内置任务调度器
-     participant Analyzer as Wiki Analyzer
+  ```mermaid
+  sequenceDiagram
+      participant User
+      participant Orch as Wiki Orchestrator
+      participant Scheduler as 内置任务调度器
+      participant Analyzer as Wiki Analyzer
+      participant Renderer as Wiki Renderer
 
-     User->>Orch: 请求生成 wiki
+      User->>Orch: 请求生成 wiki
 
-     rect rgb(200, 200, 255)
-         Note over Orch,Analyzer: Phase 1: 全局分析
-         Orch->>Scheduler: wiki_start_task<br/>全局分析: 整个项目
-         Scheduler->>Analyzer: 调用 Wiki Analyzer
-         Analyzer-->>Scheduler: GlobalAnalysisResult<br/>{project_type, main_modules, key_features}
-         Scheduler-->>Orch: 任务结果
-         Note over Orch: 生成清单:<br/>[总览, 系统1, 系统2, 系统3]
-     end
+      rect rgb(200, 200, 255)
+          Note over Orch,Analyzer: Phase 1: 全局分析
+          Orch->>Scheduler: wiki_start_task<br/>全局分析: 整个项目
+          Scheduler->>Analyzer: 调用 Wiki Analyzer
+          Analyzer-->>Scheduler: GlobalAnalysisResult<br/>{project_type, main_modules, key_features}
+          Scheduler-->>Orch: 任务结果
+          Note over Orch: 生成清单:<br/>[总览, 系统1, 系统2, 系统3]
+      end
 
-     rect rgb(200, 255, 200)
-         Note over Orch,Analyzer: Phase 2: 循环并发生成<br/>max_concurrent=3
+      rect rgb(200, 255, 200)
+          Note over Orch,Renderer: Phase 2: 循环并发生成<br/>max_concurrent=3
 
-         Orch->>Orch: 并发启动3个分析任务
+          Orch->>Orch: 并发启动3个分析任务
 
-         par 并发分析
-             Orch->>Scheduler: wiki_start_task<br/>分析总览
-             Orch->>Scheduler: wiki_start_task<br/>分析系统1
-             Orch->>Scheduler: wiki_start_task<br/>分析系统2
-         end
+          par 并发分析
+              Orch->>Scheduler: wiki_start_task<br/>分析总览
+              Orch->>Scheduler: wiki_start_task<br/>分析系统1
+              Orch->>Scheduler: wiki_start_task<br/>分析系统2
+          end
 
-         par 分析执行
-             Scheduler->>Analyzer: 分析总览
-             Scheduler->>Analyzer: 分析系统1
-             Scheduler->>Analyzer: 分析系统2
-         end
+          par 分析执行
+              Scheduler->>Analyzer: 分析总览
+              Scheduler->>Analyzer: 分析系统1
+              Scheduler->>Analyzer: 分析系统2
+          end
 
-         par 生成文档
-             Scheduler-->>Orch: 总览完成 (wiki_get_result)
-             Orch->>Orch: 生成总览 Markdown
-             Orch->>Orch: wiki_write_page(overview.md)
+          par 生成文档（使用 Renderer）
+              Scheduler-->>Orch: 总览完成 (wiki_get_result)
+              Orch->>Renderer: toPageIR(GlobalAnalysisResult)
+              Renderer-->>Orch: PageIR
+              Orch->>Renderer: render(PageIR, template)
+              Renderer-->>Orch: Markdown
+              Orch->>Orch: wiki_write_page(overview.md)
 
-             Scheduler-->>Orch: 系统1完成 (wiki_get_result)
-             Orch->>Orch: 生成系统1 Markdown
-             Orch->>Orch: wiki_write_page(modules/auth.md)
+              Scheduler-->>Orch: 系统1完成 (wiki_get_result)
+              Orch->>Renderer: toPageIR(UnitAnalysisResult)
+              Renderer-->>Orch: PageIR
+              Orch->>Renderer: render(PageIR, template)
+              Renderer-->>Orch: Markdown
+              Orch->>Orch: wiki_write_page(modules/auth.md)
 
-             Scheduler-->>Orch: 系统2完成 (wiki_get_result)
-             Orch->>Orch: 生成系统2 Markdown
-             Orch->>Orch: wiki_write_page(modules/api.md)
-         end
+              Scheduler-->>Orch: 系统2完成 (wiki_get_result)
+              Orch->>Renderer: toPageIR(UnitAnalysisResult)
+              Renderer-->>Orch: PageIR
+              Orch->>Renderer: render(PageIR, template)
+              Renderer-->>Orch: Markdown
+              Orch->>Orch: wiki_write_page(modules/api.md)
+          end
 
-         Note over Orch: 继续处理剩余内容单元...
+          Note over Orch: 继续处理剩余内容单元...
 
-         Orch->>Orch: 所有文档生成完成
-         Orch->>Orch: 在内存中构建完整导航结构
-         Orch->>Orch: wiki_update_nav(overwrite)
-     end
+          Orch->>Orch: 所有文档生成完成
+          Orch->>Orch: 在内存中构建完整导航结构
+          Orch->>Orch: wiki_update_nav(overwrite)
+      end
 
-     rect rgb(255, 200, 200)
-         Note over Orch,User: Phase 3: 最终验证
-         Orch->>Orch: wiki_validate_links(整个 wiki)
-         Orch->>User: 完成报告<br/>{生成数量, 链接状态, 耗时}
-     end
- ```
+      rect rgb(255, 200, 200)
+          Note over Orch,User: Phase 3: 最终验证
+          Orch->>Orch: wiki_validate_links(整个 wiki)
+          Orch->>User: 完成报告<br/>{生成数量, 链接状态, 耗时}
+      end
+  ```
 
  ### 3.2 并发控制策略
 
@@ -692,7 +914,7 @@
  }
  ```
 
-### 4.3 生成清单
+ ### 4.3 生成清单
 
 ```typescript
 /**
@@ -729,6 +951,109 @@ interface GenerationItem {
 
   /** 状态 */
   status: "pending" | "analyzing" | "generating" | "completed" | "failed";
+}
+```
+
+### 4.4 页面中间表示（PageIR）
+
+```typescript
+/**
+ * 页面中间表示（IR）
+ *
+ * 作为 Analyzer 输出和 Markdown 之间的标准化契约
+ * 由 Wiki Renderer 使用
+ */
+interface PageIR {
+  /** 页面元数据 */
+  metadata: {
+    /** 页面标题 */
+    title: string;
+
+    /** 相对于 output_dir 的输出路径 */
+    path?: string;
+
+    /** 侧边栏位置（可选） */
+    sidebar_position?: number;
+
+    /** 最后更新时间（ISO 8601） */
+    last_updated: string;
+
+    /** 页面 ID（用于交叉引用） */
+    page_id: string;
+  };
+
+  /** 页面内容（结构化） */
+  content: {
+    /** 简介/概述 */
+    description?: string;
+
+    /** 主要部分列表 */
+    sections: PageSection[];
+  };
+
+  /** 引用的其他页面（用于导航和链接验证） */
+  references: string[];  // 其他 page_id 列表
+
+  /** 页面类型 */
+  type: "overview" | "module" | "feature" | "api";
+}
+
+/**
+ * 页面部分
+ */
+interface PageSection {
+  /** 部分标题 */
+  heading: string;
+
+  /** 层级（1-6） */
+  level: number;
+
+  /** 部分 ID（用于锚点链接） */
+  id?: string;
+
+  /** 部分内容（可以是文本、代码块、表格等） */
+  content: PageContent[];
+}
+
+/**
+ * 页面内容（联合类型）
+ */
+type PageContent =
+  | { type: "paragraph"; text: string }
+  | { type: "code_block"; code: string; language: string; caption?: string }
+  | { type: "list"; items: string[]; ordered: boolean }
+  | { type: "table"; headers: string[]; rows: string[][] }
+  | { type: "callout"; level: "info" | "warning" | "error" | "success"; text: string }
+  | { type: "link"; text: string; url: string }
+  | { type: "symbol_reference"; name: string; signature?: string; docstring?: string };
+
+/**
+ * Wiki Renderer 接口
+ */
+interface WikiRenderer {
+  /**
+   * 将分析结果转换为 PageIR
+   */
+  toPageIR(
+    analysis: GlobalAnalysisResult | UnitAnalysisResult,
+    config: GenerationConfig
+  ): PageIR;
+
+  /**
+   * 将 PageIR 渲染为 Markdown
+   */
+  render(
+    pageIR: PageIR,
+    template?: string  // 可选的模板名称
+  ): string;
+
+  /**
+   * 验证渲染输出的完整性
+   */
+  validate(markdown: string): {
+    valid: boolean;
+    errors: string[];
+  };
 }
 ```
 
@@ -778,44 +1103,47 @@ interface GenerationItem {
      ↓ 解析结果，生成 GenerationList
  ```
 
- #### 循环并发生成阶段
+  #### 循环并发生成阶段
 
- ```
- 初始化：
- Wiki Orchestrator
-     ↓ wiki_init_structure(output_dir, navigation_mode)
-     ↓ wiki_load_state(检查是否有未完成任务)
+  ```
+  初始化：
+  Wiki Orchestrator
+      ↓ wiki_init_structure(output_dir, navigation_mode)
+      ↓ wiki_load_state(检查是否有未完成任务)
 
- 对于 GenerationList 中的每个 pending item (最多并发 max_concurrent_tasks 个):
-     Wiki Orchestrator
-         ↓ wiki_start_task(
-              agent="wiki-analyzer",
-              prompt="分析 {item.path}",
-              task_id="analyze-{item.id}"
-            )
-     ↓ 内置任务调度器启动 Wiki Analyzer
-     Wiki Analyzer (分析单个单元)
-         ↓ wiki_scan_structure(target_path={item.path})
-         ↓ wiki_extract_symbols(该路径)
-         ↓ 返回: UnitAnalysisResult
-     ↓ 任务调度器保存结果
-     Wiki Orchestrator
-         ↓ wiki_get_result(task_id="analyze-{item.id}")
-         ↓ 生成 Markdown (基于分析结果)
-         ↓ wiki_write_page(
-              rel_path={item.output_path},
-              content={Markdown 内容},
-              title={item.title}
-          )
-         ↓ wiki_save_state(item.status="completed")
+  对于 GenerationList 中的每个 pending item (最多并发 max_concurrent_tasks 个):
+      Wiki Orchestrator
+          ↓ wiki_start_task(
+               agent="wiki-analyzer",
+               prompt="分析 {item.path}",
+               task_id="analyze-{item.id}"
+             )
+      ↓ 内置任务调度器启动 Wiki Analyzer
+      Wiki Analyzer (分析单个单元)
+          ↓ wiki_scan_structure(target_path={item.path})
+          ↓ wiki_extract_symbols(该路径)
+          ↓ 返回: UnitAnalysisResult
+      ↓ 任务调度器保存结果
+      Wiki Orchestrator
+          ↓ wiki_get_result(task_id="analyze-{item.id}")
+          ↓ Wiki Renderer: toPageIR(UnitAnalysisResult)
+          ↓ 返回: PageIR (标准化中间表示)
+          ↓ Wiki Renderer: render(PageIR, template)
+          ↓ 返回: Markdown (渲染输出)
+          ↓ wiki_write_page(
+               rel_path={item.output_path},
+               content={Markdown 内容},
+               title={item.title}
+           )
+          ↓ wiki_save_state(item.status="completed")
 
- 所有任务完成后：
- Wiki Orchestrator
-     ↓ wiki_update_nav(
-          mode="overwrite" (max_concurrent_tasks > 1) | "incremental" (max_concurrent_tasks = 1),
-          navigation_items={内存中构建的导航对象}
-      )
- ```
+  所有任务完成后：
+  Wiki Orchestrator
+      ↓ wiki_update_nav(
+           mode="overwrite" (max_concurrent_tasks > 1) | "incremental" (max_concurrent_tasks = 1),
+           navigation_items={内存中构建的导航对象}
+       )
+  ```
 
  #### 最终验证阶段
 
@@ -1123,64 +1451,75 @@ interface GenerationItem {
 - 写入 `wiki/.opencode-wiki/state.json`
 - 使用原子操作（写临时文件 → rename）
 
- ### 5.7 工具实现优先级
+  ### 5.7 工具实现优先级
 
-  #### Phase 1: 基础工具（MVP）- 2 周
+    #### Phase 1: 基础工具（MVP）- 2 周
 
-  **任务列表**：
+    **任务列表**：
 
-  - [x] 工具定义（占位符已完成）
+    - [x] 工具定义（占位符已完成）
 
-  - [ ] 实现内置任务调度器
-    - [ ] 任务队列管理
-    - [ ] 线程池/进程池执行
-    - [ ] 并发控制（max_concurrent_tasks 限制）
-    - [ ] `wiki_start_task` 工具实现
-    - [ ] `wiki_get_result` 工具实现
-    - [ ] `wiki_cancel_task` 工具实现
+    - [ ] 实现内置任务调度器
+      - [ ] 任务队列管理
+      - [ ] 线程池/进程池执行
+      - [ ] 并发控制（max_concurrent_tasks 限制）
+      - [ ] `wiki_start_task` 工具实现
+      - [ ] `wiki_get_result` 工具实现
+      - [ ] `wiki_cancel_task` 工具实现
 
-  - [ ] 实现分析工具
-    - [ ] `wiki_scan_structure` 工具实现（基于文件系统遍历）
-    - [ ] `wiki_extract_symbols` 工具实现（基于正则/AST）
-    - [ ] 实现 Top N 选择逻辑
-    - [ ] 添加统计信息计算
+    - [ ] 实现分析工具
+      - [ ] `wiki_scan_structure` 工具实现（基于文件系统遍历）
+      - [ ] `wiki_extract_symbols` 工具实现（基于正则/AST）
+      - [ ] 实现 Top N 选择逻辑
+      - [ ] 添加统计信息计算
 
-  - [ ] 实现生成工具
-    - [ ] `wiki_init_structure` 工具实现
-    - [ ] `wiki_write_page` 工具实现（原子写入）
-    - [ ] `wiki_update_nav` 工具实现（自动选择模式）
-    - [ ] 路径安全检查
+    - [ ] 实现 Wiki Renderer 模块（新增）
+      - [ ] 实现 `toPageIR()` 函数（将分析结果转换为 IR）
+      - [ ] 实现 `render()` 函数（将 IR 渲染为 Markdown）
+      - [ ] 实现基础模板系统（使用 Handlebars/Mustache）
+      - [ ] 实现链接规范化逻辑
+      - [ ] 实现 `validate()` 函数（验证 Markdown 完整性）
+      - [ ] 添加内置模板（standard, minimal）
+      - [ ] 单元测试覆盖所有渲染函数
 
-  - [ ] 实现状态管理工具
-    - [ ] `wiki_load_state` 工具实现
-    - [ ] `wiki_save_state` 工具实现
-    - [ ] 增量更新逻辑
+    - [ ] 实现生成工具
+      - [ ] `wiki_init_structure` 工具实现
+      - [ ] `wiki_write_page` 工具实现（原子写入）
+      - [ ] `wiki_update_nav` 工具实现（自动选择模式）
+      - [ ] 路径安全检查
 
-  - [ ] 实现 `wiki_validate_links` 工具
+    - [ ] 实现状态管理工具
+      - [ ] `wiki_load_state` 工具实现
+      - [ ] `wiki_save_state` 工具实现
+      - [ ] 增量更新逻辑
 
-  - [ ] 定义 Wiki Orchestrator Agent Prompt
-    - [ ] 三阶段工作流指令
-    - [ ] 内置任务调度器使用指南
-    - [ ] 导航更新策略说明
+    - [ ] 实现 `wiki_validate_links` 工具
 
-  - [ ] 定义 Wiki Analyzer Agent Prompt
-    - [ ] 全局分析模式指令
-    - [ ] 单元分析模式指令
-    - [ ] 输出结构限制说明
+    - [ ] 定义 Wiki Orchestrator Agent Prompt
+      - [ ] 三阶段工作流指令
+      - [ ] 内置任务调度器使用指南
+      - [ ] Wiki Renderer 调用说明（新增）
+      - [ ] 导航更新策略说明
 
-  - [ ] 实现基础的三阶段工作流
-    - [ ] 全局分析 → 生成清单
-    - [ ] 循环并发生成（使用内置任务调度器）
-    - [ ] 最终验证
+    - [ ] 定义 Wiki Analyzer Agent Prompt
+      - [ ] 全局分析模式指令
+      - [ ] 单元分析模式指令
+      - [ ] 输出结构限制说明
 
-  - [ ] 实现并发控制逻辑
-    - [ ] 动态并发数调整
-    - [ ] 任务依赖检查
-    - [ ] 超时处理
+    - [ ] 实现基础的三阶段工作流
+      - [ ] 全局分析 → 生成清单
+      - [ ] 循环并发生成（调用 Renderer）
+      - [ ] 最终验证
 
-  - [ ] 实现 JSON 配置 schema
-    - [ ] 配置验证
-    - [ ] 默认值处理
+    - [ ] 实现并发控制逻辑
+      - [ ] 动态并发数调整
+      - [ ] 任务依赖检查
+      - [ ] 超时处理
+
+    - [ ] 实现 JSON 配置 schema
+      - [ ] 配置验证
+      - [ ] 默认值处理
+      - [ ] Renderer 配置（新增）
 
  #### Phase 4: 深度代码理解（进阶）- 4 周
  - 🟡 集成 LSP 工具（`lsp_hover`, `lsp_document_symbols`）
@@ -1450,24 +1789,68 @@ app.use('/api', AuthMiddleware);
 - **成本优化**：Analyzer 会被调用多次，应选择成本较低的模型
 - **Token 限制**：所有输出都受配置限制，确保不超出模型上下文窗口
 
- ### 8.4 导航更新模式
+  ### 8.4 导航更新模式
 
- **决策：根据并发数自动选择**
+  **决策：根据并发数自动选择**
 
- | 并发数 | 选择模式 | 理由 |
- |--------|---------|------|
- | max_concurrent_tasks = 1 | Incremental | 串行执行，安全地追加更新 |
- | max_concurrent_tasks > 1 | Overwrite | 避免并发写入竞争，保证一致性 |
+  | 并发数 | 选择模式 | 理由 |
+  |--------|---------|------|
+  | max_concurrent_tasks = 1 | Incremental | 串行执行，安全地追加更新 |
+  | max_concurrent_tasks > 1 | Overwrite | 避免并发写入竞争，保证一致性 |
 
- **实现细节**：
-- 系统自动判断，无需用户配置
-- **Incremental**：每次追加，支持实时进度反馈
-- **Overwrite**：最后一次性写入，避免竞争
+  **实现细节**：
+  - 系统自动判断，无需用户配置
+  - **Incremental**：每次追加，支持实时进度反馈
+  - **Overwrite**：最后一次性写入，避免竞争
 
   **优势**：
- - 用户体验好（并发场景性能最佳）
- - 实现简单（无需手动选择模式）
- - 避免竞争条件（并发场景安全）
+  - 用户体验好（并发场景性能最佳）
+  - 实现简单（无需手动选择模式）
+  - 避免竞争条件（并发场景安全）
+
+  ### 8.5 Wiki Renderer 模块设计
+
+  **决策：提取渲染逻辑到独立模块，而非在 Orchestrator 中直接生成 Markdown**
+
+  | 方案 | 优点 | 缺点 | 决策 |
+  |------|------|------|------|
+  | **Orchestrator 直接生成** | 简单直接，无额外抽象 | God-object 风险，测试困难，难以扩展 | ❌ 不采用 |
+  | **单独的 Writer Agent** | 专业化，独立迭代 | 高可变性，更多协调开销，难以保证一致性 | ❌ 不采用 |
+  | **Renderer 模块**（本设计） | 最佳关注点分离，可测试，可扩展，确定性输出 | 需要定义 IR 契约 | ✅ **采用** |
+
+  **设计优势**：
+
+  1. **关注点分离**
+     - Orchestrator：编排、调度、验证
+     - Renderer：格式化、模板、链接规范化
+     - 各司其职，互不干扰
+
+  2. **可测试性**
+     - Renderer 是纯函数，易于单元测试
+     - 无需启动 Agent，可直接测试渲染逻辑
+     - 可以独立验证 IR → Markdown 转换
+
+  3. **可扩展性**
+     - 通过模板系统支持多种样式
+     - 未来可轻松支持 MDX、HTML 等其他格式
+     - 添加新格式规则无需修改 Orchestrator
+
+  4. **确定性输出**
+     - 相同 IR 始终产生相同 Markdown
+     - 避免随机性导致的格式不一致
+     - 易于调试和问题复现
+
+  5. **中间表示（IR）契约**
+     - 定义 Analyzer 和 Renderer 之间的稳定接口
+     - Analyzer 变更不会直接影响渲染逻辑
+     - 便于实现不同输出格式
+
+  **实现要点**：
+
+  - **纯函数式**：所有渲染函数都是纯函数，无副作用
+  - **模板驱动**：使用模板系统（Handlebars/Mustache）而非硬编码
+  - **无状态**：Renderer 不维护任何内部状态
+  - **可配置**：通过配置文件支持自定义模板和格式规则
 
   **IMPORTANT**:
   - Orchestrator 使用内置任务调度器（`wiki_start_task`, `wiki_get_result`）
@@ -1679,26 +2062,26 @@ Be precise and thorough. Do not hallucinate.
 
  ## 10. 与 oh-my-opencode 的对应关系
 
- ### 10.1 架构对应
+  ### 10.1 架构对应
 
- | oh-my-opencode | opencode-wiki (本设计) | 对应关系 |
- |--------------|---------------------|----------|
- | **Sisyphus** (主 Agent) | **Wiki Orchestrator** (主编排 Agent) | 相同的编排能力，但 opencode-wiki 使用内置任务调度器 |
- | **explore** (背景 Agent) | **Wiki Analyzer** (分析 Agent) | 相同的只读分析模式，都返回结构化数据 |
- | **document-writer** | **Wiki Orchestrator** (生成 Markdown) | 相同的文档生成逻辑，opencode-wiki 由 Orchestrator 直接生成 |
- | **oracle** (架构咨询) | N/A | opencode-wiki 不需要独立的架构咨询 Agent |
- | **frontend-ui-ux-engineer** | N/A | opencode-wiki 不涉及前端 UI |
- | **background_task** | **内置任务调度器** | 功能相似，但实现方式不同 |
- | **LSP 工具集成** | **LSP 工具集成** (Phase 4) | 相同的工具封装方式 |
+  | oh-my-opencode | opencode-wiki (本设计) | 对应关系 |
+  |--------------|---------------------|----------|
+  | **Sisyphus** (主 Agent) | **Wiki Orchestrator** (主编排 Agent) | 相同的编排能力，但 opencode-wiki 使用内置任务调度器 |
+  | **explore** (背景 Agent) | **Wiki Analyzer** (分析 Agent) | 相同的只读分析模式，都返回结构化数据 |
+  | **document-writer** | **Wiki Renderer** (渲染模块) | 相同的文档生成逻辑，opencode-wiki 通过 Renderer 模块实现，提供更好的关注点分离 |
+  | **oracle** (架构咨询) | N/A | opencode-wiki 不需要独立的架构咨询 Agent |
+  | **frontend-ui-ux-engineer** | N/A | opencode-wiki 不涉及前端 UI |
+  | **background_task** | **内置任务调度器** | 功能相似，但实现方式不同 |
+  | **LSP 工具集成** | **LSP 工具集成** (Phase 4) | 相同的工具封装方式 |
 
- ### 10.2 工作流程对应
+  ### 10.2 工作流程对应
 
- | oh-my-opencode 模式 | opencode-wiki 模式 |
- |-----------------|-----------------|
- | 主 Agent 调度多个子 Agent 并行执行特定任务 | 主 Agent 循环调度内置任务调度器 + Analyzer + 自生成，并发处理多个内容单元 |
- | 子 Agent 独立完成特定类型任务 | Analyzer 独立完成分析，Orchestrator 负责生成和协调 |
- | 通过 Todo 列表跟踪进度 | 通过 GenerationList 跟踪进度 |
- | 全量并行启动所有任务 | 分阶段启动（全局分析 → 循环并发生成 → 验证） |
+  | oh-my-opencode 模式 | opencode-wiki 模式 |
+  |-----------------|-----------------|
+  | 主 Agent 调度多个子 Agent 并行执行特定任务 | 主 Agent 循环调度内置任务调度器 + Analyzer + Renderer，并发处理多个内容单元 |
+  | 子 Agent 独立完成特定类型任务 | Analyzer 独立完成分析，Renderer 独立完成渲染，Orchestrator 负责协调和验证 |
+  | 通过 Todo 列表跟踪进度 | 通过 GenerationList 跟踪进度 |
+  | 全量并行启动所有任务 | 分阶段启动（全局分析 → 循环并发生成 → 验证） |
 
  ### 10.3 配置对应
 
@@ -1753,13 +2136,21 @@ Be precise and thorough. Do not hallucinate.
 
 ---
 
- **文档版本**: 2.1
- **最后更新**: 2026-01-05
- **维护者**: chao243
- **修订说明**:
- - v2.0 → v2.1: 基于 Oracle 架构审查进行以下修订：
-   1. 采用内置任务调度器替代 oh-my-opencode 的 background_task
-   2. 导航更新模式改为自动选择（根据并发数）
-   3. 为所有接口添加可扩展性限制（Top N + 统计）
-   4. 补充状态管理工具，支持增量生成
-   5. 添加详细实现路线图和与 oh-my-opencode 对应关系
+  **文档版本**: 2.2
+  **最后更新**: 2026-01-05
+  **维护者**: chao243
+  **修订说明**:
+  - v2.1 → v2.2: 添加 Wiki Renderer 模块，改进架构分离：
+    1. 新增 Wiki Renderer 模块（2.3 节）
+    2. 定义 PageIR（页面中间表示）接口（4.4 节）
+    3. 更新系统架构图和工作流程图，展示 Renderer 组件
+    4. 更新工具交互流程，包含 Renderer 调用
+    5. 添加 Renderer 实现任务到 Phase 1 路线图
+    6. 更新架构对应关系（10.1 节），Renderer 替代原 Orchestrator 直接生成
+    7. 新增关键设计决策章节（8.5 节），说明 Renderer 设计理由
+  - v2.0 → v2.1: 基于 Oracle 架构审查进行以下修订：
+    1. 采用内置任务调度器替代 oh-my-opencode 的 background_task
+    2. 导航更新模式改为自动选择（根据并发数）
+    3. 为所有接口添加可扩展性限制（Top N + 统计）
+    4. 补充状态管理工具，支持增量生成
+    5. 添加详细实现路线图和与 oh-my-opencode 对应关系

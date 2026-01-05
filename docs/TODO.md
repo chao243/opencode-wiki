@@ -1,14 +1,15 @@
 # OpenCode Wiki Generator - Implementation TODO
 
 **Last Updated**: 2026-01-05  
-**Based On**: SYSTEM-DESIGN.md v2.1 (`opencode-wiki/docs/SYSTEM-DESIGN.md`)
+**Based On**: SYSTEM-DESIGN.md v2.2 (`opencode-wiki/docs/SYSTEM-DESIGN.md`)
 
 ## Overview
 
-This TODO follows the design's phased roadmap (Phase 1 → Phase 8) with a strict MVP critical path:
+This TODO follows design's phased roadmap (Phase 1 → Phase 8) with a strict MVP critical path:
 
-- **MVP goal (Phase 1)**: End-to-end "3-phase workflow" (Global Analysis → Concurrent Loop Generation → Final Validation) with a **built-in task scheduler** (no `background_task` dependency), **size-controlled analysis outputs** (Top-N + stats), **incremental resume** via state, and **automatic navigation mode selection** based on `max_concurrent_tasks`.
-- **Current repo state**: Tools exist as placeholders in `opencode-wiki/src/index.ts` but **missing** scheduler tools (`wiki_start_task`, `wiki_get_result`, `wiki_cancel_task`), state tools (`wiki_load_state`, `wiki_save_state`), and orchestrator/analyzer implementations. The config schema generator (`opencode-wiki/script/build-schema.ts`) does not match v2.1 config structure.
+- **MVP goal (Phase 1)**: End-to-end "3-phase workflow" (Global Analysis → Concurrent Loop Generation → Final Validation) with a **built-in task scheduler** (no `background_task` dependency), **size-controlled analysis outputs** (Top-N + stats), **Wiki Renderer module** (pure functional rendering with IR), **incremental resume** via state, and **automatic navigation mode selection** based on `max_concurrent_tasks`.
+
+- **Current repo state**: Tools exist as placeholders in `opencode-wiki/src/index.ts` but **missing** scheduler tools (`wiki_start_task`, `wiki_get_result`, `wiki_cancel_task`), state tools (`wiki_load_state`, `wiki_save_state`), **Wiki Renderer module** (new in v2.2), and orchestrator/analyzer implementations. The config schema generator (`opencode-wiki/script/build-schema.ts`) does not match v2.2 config structure.
 
 Conventions used below:
 - Effort: **small / medium / large**
@@ -19,13 +20,13 @@ Conventions used below:
 
 ## Phase 1: Foundation (MVP) - 2 weeks
 
-### 1.0 Align repo skeleton to v2.1 design
-- [ ] (medium, high) Normalize tool APIs to match v2.1 specs (args/return shapes)
+### 1.0 Align repo skeleton to v2.2 design
+- [ ] (medium, high) Normalize tool APIs to match v2.2 specs (args/return shapes)
   - Depends on: —
   - References: §5.1, §5.3–§5.7
-- [ ] (small, high) Define shared TypeScript types for result interfaces (GlobalAnalysisResult, UnitAnalysisResult, GenerationList, NavigationItem)
+- [ ] (small, high) Define shared TypeScript types for result + rendering interfaces (GlobalAnalysisResult, UnitAnalysisResult, GenerationList, NavigationItem, PageIR, PageSection, PageContent, WikiRenderer)
   - Depends on: tool API normalization
-  - References: §4.1–§4.3, §3.3
+  - References: §4.1–§4.4, §3.3, §2.3
 - [ ] (small, high) Implement "size limits" utilities (Top-N selection + counts + truncation policies)
   - Depends on: shared types
   - References: §1 (Data规模可控), §4.1–§4.2, §6.4 (limits.*), §8.4
@@ -65,6 +66,34 @@ Conventions used below:
 - [ ] (medium, high) Implement symbol "importance scoring" heuristics (public exports, file location weighting, signature/doc truncation)
   - Depends on: fallback extractor
   - References: §4.2 (importance), §5.4实现说明(重要性排序)
+
+### 1.2a Wiki Renderer module (pure functions + templates) [NEW in v2.2]
+> Must exist before Phase 1.6 Orchestrator can generate Markdown in v2.2 workflow.
+
+- [ ] (medium, high) Implement `toPageIR()` conversion (GlobalAnalysisResult | UnitAnalysisResult → PageIR)
+  - Depends on: shared types (incl. PageIR/PageSection/PageContent)
+  - References: §2.3, §3.1–§3.2, §4.4, §5.7, §8.5
+- [ ] (medium, high) Implement `render()` (PageIR → Markdown) via template system (prefer Handlebars `.md.hbs`)
+  - Depends on: toPageIR + template system
+  - References: §2.3 (模板系统结构), §3.1–§3.2, §4.4, §5.7
+- [ ] (medium, high) Implement template system: built-in templates + optional `renderer.template_dir` loader + `renderer.default_template`
+  - Depends on: shared types (Renderer config types) + render()
+  - References: §6.4 (renderer.*), §2.3 (配置选项), §5.7
+- [ ] (medium, high) Implement link normalization + cross-reference handling (relative paths, anchors, PageIR.references)
+  - Depends on: PageIR design + render() OR a shared link-normalization utility used by render()
+  - References: §2.3 (链接处理), §4.4 (references/page_id), §5.2 (workflow), §5.7
+- [ ] (small, medium) Implement `validate()` (Markdown completeness/contract checks; returns {valid, errors})
+  - Depends on: render()
+  - References: §2.3 (WikiRenderer.validate), §4.4 (WikiRenderer接口)
+- [ ] (medium, high) Add built-in templates (at least `standard`, `minimal`) with per-page-type variants (overview/module/feature/api)
+  - Depends on: template system
+  - References: §2.3 (模板系统结构), §4.4 (PageIR.type), §5.7
+- [ ] (medium, high) Unit tests for Renderer pure functions (`toPageIR`, `render`, link normalization, `validate`)
+  - Depends on: renderer core implemented
+  - References: §2.3 (纯函数式/可测试性), §8.5, §5.7
+- [ ] (medium, high) Update config schema + runtime config types to include `renderer.*` (template_dir, default_template, code_blocks, links, formatting)
+  - Depends on: config loader + schema (Phase 1.5)
+  - References: §6.4 (renderer.*), §2.3 (配置选项), §5.7
 
 ### 1.3 Generation tools (safe writes + navigation strategy)
 - [ ] (medium, high) Implement `wiki_init_structure` (create output dir, modules/, `.nojekyll`, validate empty/force)
@@ -106,14 +135,17 @@ Conventions used below:
 > This is the "product" behavior: 3-phase workflow with concurrency.
 
 - [ ] (large, high) Implement Wiki Orchestrator core loop:
-  - Depends on: scheduler tools + analysis tools + generation tools + config loader + state tools
-  - References: §2.1 (职责), §3.1–§3.2 (流程), §8.1 (三阶段)
+  - Depends on: scheduler tools + analysis tools + renderer module (Phase 1.2a) + generation tools + config loader + state tools
+  - References: §2.1 (职责), §3.1–§3.2 (流程), §8.1 (三阶段), §2.3 (Renderer)
 - [ ] (medium, high) Implement Phase 1 "Global Analysis → GenerationList" transformation (priorities + dependencies)
   - Depends on: analyzer global output + shared types
   - References: §4.1 (GlobalAnalysisResult), §4.3 (GenerationList), §3.1
 - [ ] (large, high) Implement Phase 2 concurrent loop:
   - Depends on: scheduler concurrency + generation list
   - References: §3.2 (dynamic strategy), §2.1 Phase 2 steps
+- [ ] (medium, high) Implement Orchestrator "rendering step" per item: `Renderer.toPageIR()` → `Renderer.render()` → (optional) `Renderer.validate()` → `wiki_write_page`
+  - Depends on: renderer module + wiki_write_page
+  - References: §3.1–§3.2, §2.3 (渲染流程), §5.5 (wiki_write_page), §2.3 (render流程)
 - [ ] (medium, high) Implement Phase 3 final validation hook call
   - Depends on: link validator tool (Phase 1.7) OR stub allowed for MVP
   - References: §2.1 Phase 3, §3.1, §5.2
@@ -326,11 +358,14 @@ graph LR
   P1T --> SYM[wiki_extract_symbols]
 
   CFG[Config Loader+Schema] --> NAVMODE[getNavigationMode]
+  CFG --> REND[Wiki Renderer]
   CFG --> ORCH[Orchestrator Workflow]
+
   TSTART --> ORCH
   TGET --> ORCH
   SCAN --> ORCH
   SYM --> ORCH
+  REND --> ORCH
 
   INIT[wiki_init_structure] --> WRITE[wiki_write_page]
   WRITE --> NAV[wiki_update_nav]
@@ -354,7 +389,8 @@ graph LR
 ## Next Actions (do these first)
 
 1. Implement shared types + size limit utilities (Phase 1.0).  
-2. Implement built-in scheduler + `wiki_start_task`/`wiki_get_result` (Phase 1.1).  
-3. Implement `wiki_scan_structure` and minimal `wiki_extract_symbols` fallback (Phase 1.2).  
-4. Implement safe writes (`wiki_write_page`) + nav mode auto-selection + state file (Phase 1.3–1.4).  
-5. Wire Orchestrator end-to-end 3-phase workflow + basic integration test (Phase 1.6–1.9).
+2. Implement Wiki Renderer module (Phase 1.2a) - toPageIR(), render(), template system, built-in templates, unit tests.  
+3. Implement built-in scheduler + `wiki_start_task`/`wiki_get_result` (Phase 1.1).  
+4. Implement `wiki_scan_structure` and minimal `wiki_extract_symbols` fallback (Phase 1.2).  
+5. Implement safe writes (`wiki_write_page`) + nav mode auto-selection + state file (Phase 1.3–1.4).  
+6. Wire Orchestrator end-to-end 3-phase workflow with Renderer calls + basic integration test (Phase 1.6–1.9).
